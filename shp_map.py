@@ -2,51 +2,67 @@ import streamlit as st
 import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
+import os
+import tempfile
 
 # Konfigurasi halaman
-st.set_page_config(layout="wide", page_title="Peta Interaktif Kota")
+st.set_page_config(layout="wide", page_title="Peta Interaktif SHP")
 
-st.title("Peta Interaktif Kota dengan Streamlit")
-st.markdown("Aplikasi web sederhana untuk menampilkan file SHP kota.")
+st.title("Peta Interaktif dari File SHP")
+st.markdown("Unggah file SHP beserta file pendukungnya (.shx, .dbf, .prj) untuk menampilkan peta.")
 
-# Menggunakan cache_data untuk performa yang lebih baik
-@st.cache_data
-def load_data(file_path):
-    """Fungsi untuk memuat file SHP menggunakan GeoPandas."""
-    try:
-        gdf = gpd.read_file(file_path)
-        return gdf
-    except Exception as e:
-        st.error(f"Error: Gagal memuat file SHP. Pastikan semua file pendukung (.dbf, .shx, .prj) ada. {e}")
-        return None
+# Kolom untuk mengunggah file
+uploaded_files = st.file_uploader(
+    "Pilih file-file SHP (shp, shx, dbf, prj, dll.)",
+    type=["shp", "shx", "dbf", "prj", "cpg"],
+    accept_multiple_files=True
+)
 
-# Ganti 'path/ke/file/kota.shp' dengan lokasi file SHP Anda
-# Pastikan file SHP dan file pendukungnya berada di folder yang sama dengan app.py
-shp_file_path = "path/ke/file/kota.shp"
+if uploaded_files:
+    # Buat direktori temporer untuk menyimpan file yang diunggah
+    with tempfile.TemporaryDirectory() as tmpdir:
+        shp_path = ""
+        for uploaded_file in uploaded_files:
+            # Simpan file yang diunggah ke direktori temporer
+            file_path = os.path.join(tmpdir, uploaded_file.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
 
-# Muat data
-gdf_kota = load_data(shp_file_path)
+            # Cari file .shp untuk dibaca oleh GeoPandas
+            if uploaded_file.name.endswith(".shp"):
+                shp_path = file_path
 
-if gdf_kota is not None:
-    # Perhitungan titik pusat peta dari data
-    centroid = gdf_kota.geometry.unary_union.centroid
-    start_location = [centroid.y, centroid.x]
+        if shp_path:
+            try:
+                # Muat data SHP dari direktori temporer
+                gdf = gpd.read_file(shp_path)
 
-    # Buat objek peta Folium
-    m = folium.Map(location=start_location, zoom_start=11, tiles='cartodbpositron')
+                # --- Visualisasi Peta ---
+                
+                # Hitung titik pusat peta dari data
+                centroid = gdf.geometry.unary_union.centroid
+                start_location = [centroid.y, centroid.x]
 
-    # Tambahkan GeoDataFrame ke peta sebagai GeoJson
-    # Anda bisa menambahkan tooltip untuk menampilkan informasi dari atribut
-    # Misalnya, jika ada kolom 'nama_kecamatan' dan 'populasi' di SHP Anda
-    folium.GeoJson(
-        gdf_kota,
-        tooltip=folium.features.GeoJsonTooltip(fields=["nama_kecamatan", "populasi"], aliases=["Kecamatan:", "Populasi:"])
-    ).add_to(m)
+                # Buat objek peta Folium
+                m = folium.Map(location=start_location, zoom_start=11, tiles='cartodbpositron')
 
-    # Tampilkan peta menggunakan streamlit_folium
-    st_folium(m, width=700, height=500)
+                # Tambahkan GeoDataFrame ke peta sebagai GeoJson
+                tooltip_fields = list(gdf.columns[~gdf.columns.isin(['geometry'])])
+                
+                folium.GeoJson(
+                    gdf,
+                    tooltip=folium.features.GeoJsonTooltip(fields=tooltip_fields, aliases=tooltip_fields)
+                ).add_to(m)
 
-    # Tambahkan informasi tambahan
-    st.markdown("---")
-    st.subheader("Data Atribut")
-    st.dataframe(gdf_kota.head())
+                # Tampilkan peta menggunakan streamlit_folium
+                st_folium(m, width=800, height=600)
+
+                # Tampilkan informasi tambahan
+                st.markdown("---")
+                st.subheader("Data Atribut dari SHP")
+                st.dataframe(gdf.head())
+
+            except Exception as e:
+                st.error(f"Error: Gagal memproses file SHP. Pastikan semua file yang diperlukan sudah diunggah. Detail error: {e}")
+        else:
+            st.error("Silakan unggah file `.shp` bersama dengan file pendukungnya.")
